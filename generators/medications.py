@@ -1,5 +1,6 @@
-from medications_data import medications_data
 import random
+
+from generators.medications_data import medications_data
 
 
 def generate_medications():
@@ -35,7 +36,7 @@ def generate_medications():
 if __name__ == "__main__":
     meds = generate_medications()
     print(f"Generated {len(meds)} medications")
-    print(f"{meds[0]}")
+    # print(f"{meds[0]}")
 
 # format structure
 """{

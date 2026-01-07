@@ -1,5 +1,5 @@
 import random
-from medications_data import stocking_rule
+from generators.medications_data import stocking_rule
 
 seed = 42
 random.seed(42)
@@ -140,11 +140,11 @@ def generate_inventory(facilities, batches, medications):
 
 
 if __name__ == "__main__":
-    from medications import generate_medications
-    from brands import generate_brands
-    from batches import generate_batches
-    from companies import generate_companies
-    from facilities import generate_facilities
+    from generators.batches import generate_batches
+    from generators.brands import generate_brands
+    from generators.companies import generate_companies
+    from generators.facilities import generate_facilities
+    from generators.medications import generate_medications
 
     meds = generate_medications()
     brands = generate_brands(meds)
@@ -154,7 +154,7 @@ if __name__ == "__main__":
 
     inventory = generate_inventory(facilities, batches, meds)
     print(f"Generated {len(inventory)} inv records")
-    print(f"{inventory[0]}")
+    # print(f"{inventory[0]}")
 
     # Generated 2478 records
 

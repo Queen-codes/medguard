@@ -1,4 +1,4 @@
-from brands_data import brands_data
+from generators.brands_data import brands_data
 
 
 def generate_brands(medications):
@@ -42,7 +42,7 @@ def generate_brands(medications):
 
 # TEST
 if __name__ == "__main__":
-    from medications import generate_medications
+    from generators.medications import generate_medications
 
     meds = generate_medications()
     brands = generate_brands(meds)

@@ -1,6 +1,7 @@
-import random
 from datetime import datetime, timedelta
-from companies import authorized_importers
+import random
+
+from generators.companies import authorized_importers
 
 
 def generate_batches(brands, companies, batches_per_brand=(2, 5), seed=42):
@@ -126,9 +127,9 @@ def generate_batches(brands, companies, batches_per_brand=(2, 5), seed=42):
 
 
 if __name__ == "__main__":
-    from medications import generate_medications
-    from brands import generate_brands
-    from companies import generate_companies
+    from generators.brands import generate_brands
+    from generators.companies import generate_companies
+    from generators.medications import generate_medications
 
     meds = generate_medications()
     companies = generate_companies()

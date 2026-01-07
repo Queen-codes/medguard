@@ -1,4 +1,5 @@
-from facilities_data import facilities_data
+from generators.facilities_data import facilities_data
+
 
 def generate_facilities():
     facilities = []
@@ -36,9 +37,9 @@ def generate_facilities():
 if __name__ == "__main__":
     facilities = generate_facilities()
     print(f"Generated {len(facilities)} facilities")
-    #print(f"\nSample: {facilities[0]}")
+    # print(f"\nSample: {facilities[0]}")
 
-#Generated 50 facilities
+# Generated 50 facilities
 """{
     'facility_id': 'FAC_001', ''
     'name': 'Lagos University Teaching Hospital', 
