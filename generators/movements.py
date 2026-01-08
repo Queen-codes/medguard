@@ -3,7 +3,13 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 
-def dispense(inventory, quantity, timestamp):
+def dispense(
+    inventory,
+    quantity,
+    timestamp,
+    source="UNKNOWN",
+    reason="UNSPECIFIED",
+):
     """
     for recording that medicine was dispensed from a batch simulating real-life dispense.
     """
@@ -13,12 +19,14 @@ def dispense(inventory, quantity, timestamp):
         quantity_change=-abs(quantity),
         timestamp=timestamp,
         reference_id=f"DIS_{random.randint(10000, 999999)}",
+        source=source,
+        reason=reason,
     )
 
 
-def restock(inventory, quantity, timestamp):
+def restock(inventory, quantity, timestamp, source="UNKNOWN"):
     """
-    for recording restock batch
+    for recording the movement restock of a batch of med
     """
     return _record_movement(
         inventory=inventory,
@@ -26,39 +34,65 @@ def restock(inventory, quantity, timestamp):
         quantity_change=abs(quantity),
         timestamp=timestamp,
         reference_id=f"RES_{random.randint(10000, 999999)}",
+        source=source,
     )
 
 
-def transfer_out(inventory, quantity, timestamp, destination_facility_id):
+def transfer_out(
+    inventory,
+    quantity,
+    timestamp,
+    destination_facility_id,
+    transfer_id=None,
+    source="UNKNOWN",
+):
     """
     for meds that leave a facility when a transfer request is fuffilled
     """
-    return _record_movement(
+    mov = _record_movement(
         inventory=inventory,
         movement_type="TRANSFER_OUT",
-        quantity_change=-abs(quantity),  # has to be a negative value
+        quantity_change=-abs(quantity),
         timestamp=timestamp,
         reference_id=f"TRF_TO_{destination_facility_id}",
+        source=source,
     )
+    # this records the transfer id for if/when a transfer request is inititated
+    mov["transfer_id"] = transfer_id or f"TXF_{random.randint(10000, 99999)}"
+    mov["destination_facility_id"] = destination_facility_id
+    return mov
 
 
-def transfer_in(inventory, quantity, timestamp, source_facility_id):
+def transfer_in(
+    inventory,
+    quantity,
+    timestamp,
+    source_facility_id,
+    transfer_id=None,
+    source="UNKNOWN",
+):
     """
     Record stock arriving at a facility.
     """
-    return _record_movement(
+    mov = _record_movement(
         inventory=inventory,
         movement_type="TRANSFER_IN",
         quantity_change=abs(quantity),
         timestamp=timestamp,
         reference_id=f"TRF_FROM_{source_facility_id}",
+        source=source,
     )
+    mov["transfer_id"] = transfer_id or f"TXF_{random.randint(10000, 99999)}"
+    mov["source_facility_id"] = source_facility_id
+    return mov
 
 
-def expiry_withdraw(inventory, quantity, timestamp):
+def expiry_withdraw(inventory, quantity, timestamp, source="UNKNOWN"):
     """
     to track stock that was removed from shelf due to expiry
     """
+    # to prevent withdrawing more than available since expiry might want to withdraw the whole quantity of expired batch
+    # safe quantity lets it remove the actual quantity left.
     safe_quantity = min(abs(quantity), inventory["quantity"])
     return _record_movement(
         inventory=inventory,
@@ -66,11 +100,18 @@ def expiry_withdraw(inventory, quantity, timestamp):
         quantity_change=-safe_quantity,
         timestamp=timestamp,
         reference_id="EXPIRY_AUDIT",
+        source=source,
     )
 
 
 def _record_movement(
-    inventory, movement_type, quantity_change, timestamp, reference_id
+    inventory,
+    movement_type,
+    quantity_change,
+    timestamp,
+    reference_id,
+    source="UNKNOWN",
+    reason="UNSPECIFIED",
 ):
     """
     function that:
@@ -78,6 +119,7 @@ def _record_movement(
     - returns a movement record
     """
 
+    # check if timestamp is a datetime object.
     if isinstance(timestamp, datetime):
         timestamp = timestamp.isoformat()
 
@@ -91,11 +133,13 @@ def _record_movement(
         "batch_id": inventory["batch_id"],
         "med_id": inventory["med_id"],
         "movement_type": movement_type,
+        "quantity_before": previous_quantity,
         "quantity_change": quantity_change,
         "quantity_after": new_quantity,
         "timestamp": timestamp,
         "reference_id": reference_id,
-        "source": "HISTORICAL_SEED",
+        "source": source,
+        "reason": reason,
     }
 
     inventory["quantity"] = new_quantity
@@ -128,20 +172,24 @@ def seed_historical_movements(inventory, medications, start_date, days=30, seed=
                     qty = min(qty, batch["quantity"])
 
                     movements.append(
-                        dispense(batch, qty, day_time + timedelta(hours=12))
+                        dispense(
+                            batch,
+                            qty,
+                            day_time + timedelta(hours=12),
+                            source="HISTORICAL_SEED",
+                        )
                     )
 
     return movements
 
 
 if __name__ == "__main__":
-
-    from inventory import generate_inventory
-    from companies import generate_companies
-    from brands import generate_brands
-    from batches import generate_batches
-    from facilities import generate_facilities
-    from medications import generate_medications
+    from generators.inventory import generate_inventory
+    from generators.companies import generate_companies
+    from generators.brands import generate_brands
+    from generators.batches import generate_batches
+    from generators.facilities import generate_facilities
+    from generators.medications import generate_medications
 
     meds = generate_medications()
     brands = generate_brands(meds)
@@ -154,16 +202,18 @@ if __name__ == "__main__":
     movement = seed_historical_movements(inventory, meds, start_date)
     # print(movement[0])
 
-{
+"""{
     "movement_id": "MOV_246316",
     "inventory_id": "INV_00001",
     "facility_id": "FAC_001",
-    "batch_id": "BAT_0008",
+    "batch_id": "BAT_0006",
     "med_id": "MED_001",
     "movement_type": "DISPENSE",
+    "quantity_before": 242,
     "quantity_change": -8,
-    "quantity_after": 399,
+    "quantity_after": 234,
     "timestamp": "2025-11-12T12:00:00",
     "reference_id": "DIS_244053",
     "source": "HISTORICAL_SEED",
-}
+    "reason": "UNSPECIFIED",
+}"""
