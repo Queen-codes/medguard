@@ -248,19 +248,42 @@ def generate_events(
     movements: List[Dict],
     medications: List[Dict],
     current_time: datetime,
+    existing_events: List[Dict] = None,
     thresholds=DEFAULT_THRESHOLDS,
 ) -> List[Dict]:
 
-    events = []
+    existing_events = existing_events or []
 
-    events.extend(detect_low_stock(inventory, current_time))
-    events.extend(detect_stockout(inventory, current_time))
-    events.extend(detect_near_expiry(inventory, current_time, thresholds))
-    events.extend(detect_expired_in_stock(inventory, current_time))
-    events.extend(
+    # create signatures of active events
+    existing_signatures = set()
+    for e in existing_events:
+        if e.get("is_active", True):
+            sig = (e["event_type"], e["facility_id"], e["med_id"], e.get("batch_id"))
+            existing_signatures.add(sig)
+
+    # detect all events
+    all_detected = []
+    all_detected.extend(detect_low_stock(inventory, current_time))
+    all_detected.extend(detect_stockout(inventory, current_time))
+    all_detected.extend(detect_near_expiry(inventory, current_time, thresholds))
+    all_detected.extend(detect_expired_in_stock(inventory, current_time))
+    all_detected.extend(
         detect_rapid_consumption(
             movements, inventory, medications, current_time, thresholds
         )
     )
 
-    return events
+    # filter duplicates
+    new_events = []
+    for event in all_detected:
+        sig = (
+            event["event_type"],
+            event["facility_id"],
+            event["med_id"],
+            event.get("batch_id"),
+        )
+        if sig not in existing_signatures:
+            new_events.append(event)
+            existing_signatures.add(sig)
+
+    return new_events

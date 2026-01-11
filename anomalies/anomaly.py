@@ -1,23 +1,25 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import defaultdict
 from typing import List, Dict
 import math
 import uuid
 
+from generators.companies import authorized_importers
 
 ANOMALY_TYPES = [
-    "RAPID_TURNOVER",
     "IMPOSSIBLE_QUANTITY",
     "GEOGRAPHIC_IMPOSSIBILITY",
     "GHOST_STOCK",
+    "UNAUTHORIZED_IMPORTER",
+    "PRICE_ANOMALY",
+    "DUPLICATE_BATCH_NUMBER",
 ]
 
 DEFAULT_THRESHOLDS = {
-    "RAPID_TURNOVER_HOURS": 24,
-    "RAPID_TURNOVER_MULTIPLIER": 2.5,
     "IMPOSSIBLE_QUANTITY_MULTIPLIER": 10,
     "GEOGRAPHIC_IMPOSSIBLE_KM": 300,
     "GEOGRAPHIC_IMPOSSIBLE_HOURS": 6,
+    "PRICE_ANOMALY_LOW_THRESHOLD": 0.7,
 }
 
 
@@ -61,62 +63,7 @@ def haversine_km(lat1, lon1, lat2, lon2):
     return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
-def detect_rapid_turnover(
-    movements: List[Dict],
-    events: List[Dict],
-    current_time: datetime,
-    thresholds=DEFAULT_THRESHOLDS,
-) -> List[Dict]:
-    anomalies = []
-
-    # calculate how far back to detect movements of rapid turnover < 24hrs
-    period_since = current_time - timedelta(hours=thresholds["RAPID_TURNOVER_HOURS"])
-
-    # total dispensed per facility and medication
-    dispensed = defaultdict(int)
-
-    for mov in movements:
-        if mov["movement_type"] != "DISPENSE":
-            continue
-        # convert movement's timestamp string back to datetime obj for easier comparison
-        ts = datetime.fromisoformat(mov["timestamp"])
-        if ts < period_since:
-            continue
-
-        # count how much was dispensed per fac-med tuple pair
-        key = (mov["facility_id"], mov["med_id"])
-        dispensed[key] += abs(mov["quantity_change"])
-
-    expected_qty = defaultdict(int)
-    for event in events:
-        if event["event_type"] in ("LOW_STOCK", "CRITICAL_STOCK"):
-            key = (event["facility_id"], event["med_id"])
-            expected_qty[key] += event["data"].get("reorder_point", 0)
-
-    for key, quantity in dispensed.items():
-        baseline = expected_qty.get(key)
-        if not baseline:
-            continue
-
-        if quantity > baseline * thresholds["RAPID_TURNOVER_MULTIPLIER"]:
-            anomalies.append(
-                create_anomaly(
-                    anomaly_type="RAPID_TURNOVER",
-                    severity="HIGH",
-                    facility_id=key[0],
-                    med_id=key[1],
-                    timestamp=current_time,
-                    details=f"Dispensed {quantity} units in short window, expected ~{baseline}",
-                    evidence={
-                        "dispensed": quantity,
-                        "expected": baseline,
-                    },
-                )
-            )
-
-    return anomalies
-
-
+# anomalies based on movements
 def detect_impossible_quantity(
     movements: List[Dict],
     inventory: List[Dict],
@@ -126,11 +73,6 @@ def detect_impossible_quantity(
 ) -> List[Dict]:
     anomalies = []
 
-    """initial_by_batch = {
-        inv["batch_id"]: inv.get("initial_quantity", None) for inv in inventory
-    }"""
-
-    # get initial quantity of a batch
     initial_qty_by_batch = {b["batch_id"]: b["initial_quantity"] for b in batches}
 
     dispensed_by_batch = defaultdict(int)
@@ -157,6 +99,7 @@ def detect_impossible_quantity(
                     evidence={
                         "initial_quantity": initial,
                         "dispensed_quantity": dispensed,
+                        "ratio": round(dispensed / initial, 2),
                     },
                 )
             )
@@ -170,12 +113,19 @@ def detect_geographic_impossibility(
     current_time: datetime,
     thresholds=DEFAULT_THRESHOLDS,
 ) -> List[Dict]:
+    """detect when same batch appears at distant locations in an unrealistic short period."""
     anomalies = []
 
     facility_lookup = {f["facility_id"]: f for f in facilities}
     movements_by_batch = defaultdict(list)
 
     for mov in movements:
+        # skip initial seed
+        if mov.get("source") == "INITIAL_SEED":
+            continue
+        #  check restock  movements only
+        if mov["movement_type"] != "RESTOCK":
+            continue
         movements_by_batch[mov["batch_id"]].append(mov)
 
     for batch_id, batch_moves in movements_by_batch.items():
@@ -190,6 +140,10 @@ def detect_geographic_impossibility(
             latter_fac = facility_lookup.get(latter_movement["facility_id"])
 
             if not former_fac or not latter_fac:
+                continue
+
+            # skip same facility
+            if former_fac["facility_id"] == latter_fac["facility_id"]:
                 continue
 
             former_time = datetime.fromisoformat(former_movement["timestamp"])
@@ -233,16 +187,21 @@ def detect_ghost_stock(
     movements: List[Dict],
     current_time: datetime,
 ) -> List[Dict]:
+    """Detect inventory that exists without any movement at that facility."""
     anomalies = []
 
-    received_batches = {
-        mov["batch_id"]
-        for mov in movements
-        if mov["movement_type"] in ("RESTOCK", "TRANSFER_IN")
-    }
+    received_at_facility = set()
+    for mov in movements:
+        if mov["movement_type"] in ("RESTOCK", "TRANSFER_IN"):
+            key = (mov["facility_id"], mov["batch_id"])
+            received_at_facility.add(key)
 
     for inv in inventory:
-        if inv["quantity"] > 0 and inv["batch_id"] not in received_batches:
+        if inv["quantity"] <= 0:
+            continue
+
+        key = (inv["facility_id"], inv["batch_id"])
+        if key not in received_at_facility:
             anomalies.append(
                 create_anomaly(
                     anomaly_type="GHOST_STOCK",
@@ -251,7 +210,131 @@ def detect_ghost_stock(
                     med_id=inv["med_id"],
                     batch_id=inv["batch_id"],
                     timestamp=current_time,
-                    details="Inventory exists without any receipt movement",
+                    details="Inventory exists at facility without any receipt movement",
+                    evidence={
+                        "quantity": inv["quantity"],
+                        "facility_id": inv["facility_id"],
+                    },
+                )
+            )
+
+    return anomalies
+
+
+def detect_unauthorized_importer(
+    batches: List[Dict],
+    current_time: datetime,
+) -> List[Dict]:
+    """Detect batches imported by unauthorized importers."""
+    anomalies = []
+
+    for batch in batches:
+        manufacturer_name = batch.get("manufacturer_name")
+        importer_name = batch.get("importer_name")
+
+        # skip nigerian manufacturers because they can self-distribute
+        if manufacturer_name == importer_name:
+            continue
+
+        # does manufacturer have authorized importers ?
+        authorized = authorized_importers.get(manufacturer_name)
+
+        # not an international manufacturer requiring authorization, skip
+        if authorized is None:
+            continue
+
+        if importer_name not in authorized:
+            anomalies.append(
+                create_anomaly(
+                    anomaly_type="UNAUTHORIZED_IMPORTER",
+                    severity="CRITICAL",
+                    facility_id=None,
+                    med_id=batch["med_id"],
+                    batch_id=batch["batch_id"],
+                    timestamp=current_time,
+                    details=f"Batch imported by unauthorized importer: {importer_name}",
+                    evidence={
+                        "manufacturer": manufacturer_name,
+                        "importer": importer_name,
+                        "authorized_importers": authorized,
+                    },
+                )
+            )
+
+    return anomalies
+
+
+def detect_duplicate_batch_number(
+    batches: List[Dict],
+    current_time: datetime,
+) -> List[Dict]:
+    """detect batches with duplicate batch numbers."""
+    anomalies = []
+
+    # group batches by batch no
+    by_batch_number = defaultdict(list)
+    for batch in batches:
+        by_batch_number[batch["batch_number"]].append(batch)
+
+    for batch_number, batch_list in by_batch_number.items():
+        if len(batch_list) > 1:
+            batch_ids = [b["batch_id"] for b in batch_list]
+            manufacturers = list(set(b["manufacturer_name"] for b in batch_list))
+
+            anomalies.append(
+                create_anomaly(
+                    anomaly_type="DUPLICATE_BATCH_NUMBER",
+                    severity="CRITICAL",
+                    facility_id=None,
+                    med_id=batch_list[0]["med_id"],
+                    batch_id=batch_ids[0],
+                    timestamp=current_time,
+                    details=f"Batch number {batch_number} appears on {len(batch_list)} different batches",
+                    evidence={
+                        "batch_number": batch_number,
+                        "duplicate_batch_ids": batch_ids,
+                        "manufacturers": manufacturers,
+                    },
+                )
+            )
+
+    return anomalies
+
+
+def detect_price_anomaly(
+    inventory: List[Dict],
+    current_time: datetime,
+    thresholds=DEFAULT_THRESHOLDS,
+) -> List[Dict]:
+
+    anomalies = []
+
+    for inv in inventory:
+        actual_price = inv.get("unit_price")
+        expected_price = inv.get("expected_price")
+
+        if not actual_price or not expected_price or expected_price <= 0:
+            continue
+
+        ratio = actual_price / expected_price
+
+        if ratio < thresholds["PRICE_ANOMALY_LOW_THRESHOLD"]:
+            anomalies.append(
+                create_anomaly(
+                    anomaly_type="PRICE_ANOMALY",
+                    severity="HIGH",
+                    facility_id=inv["facility_id"],
+                    med_id=inv["med_id"],
+                    batch_id=inv["batch_id"],
+                    timestamp=current_time,
+                    details=f"Suspiciously low price: {actual_price} vs expected {expected_price}",
+                    evidence={
+                        "actual_price": actual_price,
+                        "expected_price": expected_price,
+                        "price_ratio": round(ratio, 2),
+                        "counterfeit_risk": inv.get("counterfeit_risk"),
+                        "facility_id": inv["facility_id"],
+                    },
                 )
             )
 
@@ -266,20 +349,77 @@ def generate_anomalies(
     facilities: List[Dict],
     batches: List[Dict],
     current_time: datetime,
+    existing_anomalies: List[Dict] = None,
     thresholds=DEFAULT_THRESHOLDS,
 ) -> List[Dict]:
 
-    anomalies = []
+    existing_anomalies = existing_anomalies or []
 
-    anomalies.extend(detect_rapid_turnover(movements, events, current_time, thresholds))
-    anomalies.extend(
+    # Create signatures of already-detected anomalies
+    existing_signatures = set()
+    for a in existing_anomalies:
+        sig = (
+            a["anomaly_type"],
+            a.get("facility_id"),
+            a.get("batch_id"),
+            a.get("med_id"),
+        )
+        existing_signatures.add(sig)
+
+    all_detected = []
+    all_detected.extend(
         detect_impossible_quantity(
             movements, inventory, batches, current_time, thresholds
         )
     )
-    anomalies.extend(
+    all_detected.extend(
         detect_geographic_impossibility(movements, facilities, current_time, thresholds)
     )
-    anomalies.extend(detect_ghost_stock(inventory, movements, current_time))
+    all_detected.extend(detect_ghost_stock(inventory, movements, current_time))
+    all_detected.extend(detect_unauthorized_importer(batches, current_time))
+    all_detected.extend(detect_duplicate_batch_number(batches, current_time))
+    all_detected.extend(detect_price_anomaly(inventory, current_time, thresholds))
 
-    return anomalies
+    # fulter duplicates
+    new_anomalies = []
+    for anomaly in all_detected:
+        sig = (
+            anomaly["anomaly_type"],
+            anomaly.get("facility_id"),
+            anomaly.get("batch_id"),
+            anomaly.get("med_id"),
+        )
+        if sig not in existing_signatures:
+            new_anomalies.append(anomaly)
+            existing_signatures.add(sig)
+
+    return new_anomalies
+
+
+if __name__ == "__main__":
+    from generators.medications import generate_medications
+    from generators.brands import generate_brands
+    from generators.companies import generate_companies
+    from generators.batches import generate_batches
+    from generators.facilities import generate_facilities
+    from generators.inventory import generate_inventory
+
+    meds = generate_medications()
+    brands = generate_brands(meds)
+    companies = generate_companies()
+    batches = generate_batches(brands, companies)
+    facilities = generate_facilities()
+    inventory = generate_inventory(facilities, batches, meds, brands)
+
+    current_time = datetime(2026, 1, 3, 10, 0)
+    movements = []  # empty to show ghost stock
+
+    all_anomalies = generate_anomalies(
+        inventory=inventory,
+        movements=movements,
+        events=[],
+        facilities=facilities,
+        batches=batches,
+        current_time=current_time,
+    )
+    # print(f"Total: {len(all_anomalies)}")
