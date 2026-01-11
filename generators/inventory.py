@@ -42,7 +42,7 @@ def calculate_reorder_point(base_demand, facility_type, tier):
     return max(10, int(reorder_point))  # reorder never below 10
 
 
-def generate_inventory(facilities, batches, medications):
+def generate_inventory(facilities, batches, medications, brands):
     """
     Generate inventory records for all facilities.
     the inventory record should follow this rules:
@@ -53,6 +53,7 @@ def generate_inventory(facilities, batches, medications):
         facilities: List of facility dicts
         batches: List of batch dicts
         medications: List of medication dicts
+        brands: List of brand dicts
 
     Returns:
         List of inventory dicts
@@ -67,6 +68,9 @@ def generate_inventory(facilities, batches, medications):
             batches_by_med[med_id] = []
         batches_by_med[med_id].append(batch)
     # print(batches_by_med)
+
+    # Brand lookup for price
+    brand_lookup = {b["brand_id"]: b for b in brands}
 
     inventory = []
     inv_counter = 1
@@ -85,6 +89,7 @@ def generate_inventory(facilities, batches, medications):
             base_demand = med["base_demand"]
             stocking_level = med["stocking_level"]
 
+            # check stocking level
             if stocking_level not in allowed_levels:
                 continue
             if is_cold_chain and not has_cold_storage:
@@ -119,6 +124,19 @@ def generate_inventory(facilities, batches, medications):
                 if qty <= 0:
                     continue
 
+                # get price of brand
+                brand = brand_lookup.get(batch["brand_id"])
+                if not brand:
+                    continue
+
+                # 2% chance of suspicious low price as a counterfeit indicator
+                if random.random() < 0.02:
+                    price_multiplier = random.uniform(0.4, 0.6)  # low
+                else:
+                    price_multiplier = random.uniform(0.9, 1.1)  # Normal
+
+                unit_price = int(brand["unit_price"] * price_multiplier)
+
                 inv_record = {
                     "inventory_id": f"INV_{inv_counter:05d}",
                     "facility_id": fac_id,
@@ -131,7 +149,9 @@ def generate_inventory(facilities, batches, medications):
                     "quantity": qty,
                     "reorder_point": reorder_point,
                     "expiry_date": batch["expiry_date"],
-                    "unit_price": batch["unit_price"],
+                    "unit_price": unit_price,
+                    "expected_price": brand["unit_price"],  # for anomaly detection
+                    "counterfeit_risk": batch.get("counterfeit_risk", "LOW"),
                 }
                 inventory.append(inv_record)
                 inv_counter += 1
@@ -152,7 +172,7 @@ if __name__ == "__main__":
     batches = generate_batches(brands, companies)
     facilities = generate_facilities()
 
-    inventory = generate_inventory(facilities, batches, meds)
+    inventory = generate_inventory(facilities, batches, meds, brands)
     print(f"Generated {len(inventory)} inv records")
     # print(f"{inventory[0]}")
 
