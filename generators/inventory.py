@@ -130,7 +130,7 @@ def generate_inventory(facilities, batches, medications, brands):
                     continue
 
                 # 2% chance of suspicious low price as a counterfeit indicator
-                if random.random() < 0.02:
+                if random.random() < 0.01:
                     price_multiplier = random.uniform(0.4, 0.6)  # low
                 else:
                     price_multiplier = random.uniform(0.9, 1.1)  # Normal
