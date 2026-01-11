@@ -167,18 +167,20 @@ def seed_historical_movements(inventory, medications, start_date, days=30, seed=
                 if batch["quantity"] <= 0:
                     continue
 
-                if random.random() < 0.8:
+                if random.random() < 0.05:
+                    qty = max(1, int(daily_demand * random.uniform(2.5, 4.0)))
+                else:
                     qty = max(1, int(random.gauss(daily_demand, daily_demand * 0.35)))
-                    qty = min(qty, batch["quantity"])
+                qty = min(qty, batch["quantity"])
 
-                    movements.append(
-                        dispense(
-                            batch,
-                            qty,
-                            day_time + timedelta(hours=12),
-                            source="HISTORICAL_SEED",
-                        )
+                movements.append(
+                    dispense(
+                        batch,
+                        qty,
+                        day_time + timedelta(hours=12),
+                        source="HISTORICAL_SEED",
                     )
+                )
 
     return movements
 
