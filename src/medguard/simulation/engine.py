@@ -5,15 +5,15 @@ import random
 import heapq
 import numpy as np
 
-from generators.movements import dispense, expiry_withdraw, restock
-from generators.inventory import generate_inventory
-from generators.medications import generate_medications
-from generators.brands import generate_brands
-from generators.batches import generate_batches
-from generators.companies import generate_companies
-from generators.facilities import generate_facilities
-from events.events import generate_events
-from anomalies.anomaly import generate_anomalies
+from medguard.data.generators.movements import dispense, expiry_withdraw, restock
+from medguard.data.generators.inventory import generate_inventory
+from medguard.data.generators.medications import generate_medications
+from medguard.data.generators.brands import generate_brands
+from medguard.data.generators.batches import generate_batches
+from medguard.data.generators.companies import generate_companies
+from medguard.data.generators.facilities import generate_facilities
+from medguard.detection.events import generate_events
+from medguard.detection.anomalies import generate_anomalies
 
 
 START_TIME = datetime(2026, 1, 3, 0, 0, 0)

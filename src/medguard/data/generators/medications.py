@@ -1,6 +1,6 @@
 import random
 
-from generators.medications_data import medications_data
+from medguard.data.seed.medications_data import medications_data
 
 
 def generate_medications():

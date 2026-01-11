@@ -186,12 +186,12 @@ def seed_historical_movements(inventory, medications, start_date, days=30, seed=
 
 
 if __name__ == "__main__":
-    from generators.inventory import generate_inventory
-    from generators.companies import generate_companies
-    from generators.brands import generate_brands
-    from generators.batches import generate_batches
-    from generators.facilities import generate_facilities
-    from generators.medications import generate_medications
+    from medguard.data.generators.inventory import generate_inventory
+    from medguard.data.generators.companies import generate_companies
+    from medguard.data.generators.brands import generate_brands
+    from medguard.data.generators.batches import generate_batches
+    from medguard.data.generators.facilities import generate_facilities
+    from medguard.data.generators.medications import generate_medications
 
     meds = generate_medications()
     brands = generate_brands(meds)

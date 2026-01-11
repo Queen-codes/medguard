@@ -1,5 +1,5 @@
 import random
-from generators.medications_data import stocking_rule
+from medguard.data.seed.medications_data import stocking_rule
 
 seed = 42
 random.seed(42)
@@ -160,11 +160,11 @@ def generate_inventory(facilities, batches, medications, brands):
 
 
 if __name__ == "__main__":
-    from generators.batches import generate_batches
-    from generators.brands import generate_brands
-    from generators.companies import generate_companies
-    from generators.facilities import generate_facilities
-    from generators.medications import generate_medications
+    from medguard.data.generators.batches import generate_batches
+    from medguard.data.generators.brands import generate_brands
+    from medguard.data.generators.companies import generate_companies
+    from medguard.data.generators.facilities import generate_facilities
+    from medguard.data.generators.medications import generate_medications
 
     meds = generate_medications()
     brands = generate_brands(meds)

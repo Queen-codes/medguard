@@ -1,4 +1,4 @@
-from generators.facilities_data import facilities_data
+from medguard.data.seed.facilities_data import facilities_data
 
 
 def generate_facilities():
