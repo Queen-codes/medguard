@@ -1,73 +1,33 @@
-from google import genai
-from google.genai import types
-from medguard.agent.schema import query_function_declaration, query_inventory
-from dotenv import load_dotenv
+from medguard.db.database import get_connection_to_db
+from medguard.agent.registry import registry
 
-load_dotenv()
 
-# client and tool config
+@registry.register
+def query_inventory(facility_id: str, medication_id: str) -> dict:
+    """
+    Get current inventory level for a specific medication at a specific facility.
+    Use this to check stock quantities.
+    """
+    conn = get_connection_to_db()
+    cursor = conn.cursor()
 
-client = genai.Client()
-tools = types.Tool(function_declarations=[query_function_declaration])
-config = types.GenerateContentConfig(tools=[tools])
-
-# user prompt
-contents = [
-    types.Content(
-        role="user",
-        parts=[types.Part(text="Get the quantity of MED_001 at FAC_001")],
+    cursor.execute(
+        """
+        SELECT SUM(inventory.quantity) AS total_quantity
+        FROM inventory
+        JOIN batches ON inventory.batch_id = batches.batch_id
+        JOIN brands ON batches.brand_id = brands.brand_id
+        WHERE inventory.facility_id = ?
+          AND brands.med_id = ?
+        """,
+        (facility_id, medication_id),
     )
-]
-# send request
-response = client.models.generate_content(
-    model="gemini-3-flash-preview",
-    contents=contents,
-    config=config,
-)
 
-# if response.candidates[0].content.parts[0].function_call:
-# function_call = response.candidates[0].content.parts[0].function_call
-# print(f"Function to call: {function_call.name}")
-# print(f"Arguments: {function_call.args}")
-#  In a real app, you would call your function here:
-#  result = query_inventory(**function_call.args)
-# else:
-# print("No function call found in the response.")
-# print(response.text)
+    row = cursor.fetchone()
+    conn.close()
 
-print(
-    response.candidates[0].content.parts[0].function_call
-)  # get functionCall obj from gemini
-# id=None args={'facility_id': 'FAC_001', 'medication_id': 'MED_001'} name='query_inventory' partial_args=None will_continue=None
-
-
-# parse response
-tool_call = response.candidates[0].content.parts[0].function_call
-
-if tool_call.name == "query_inventory":
-    result = query_inventory(**tool_call.args)
-    # print(result)
-    # {'facility_id': 'FAC_001', 'medication_id': 'MED_001', 'quantity': 471}
-
-# create response back to user
-function_response_part = types.Part.from_function_response(
-    name=tool_call.name, response={"result": result}
-)
-
-# Append function call and result of the function execution to contents
-contents.append(
-    response.candidates[0].content
-)  # Append the content from the model's response.
-contents.append(
-    types.Content(role="user", parts=[function_response_part])
-)  # Append the function response
-
-client = genai.Client()
-final_response = client.models.generate_content(
-    model="gemini-3-flash-preview",
-    config=config,
-    contents=contents,
-)
-
-print(final_response.text)
-# The quantity of MED_001 at FAC_001 is 471.
+    return {
+        "facility_id": facility_id,
+        "medication_id": medication_id,
+        "quantity": row["total_quantity"] or 0 if row else 0,
+    }
